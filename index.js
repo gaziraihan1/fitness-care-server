@@ -30,6 +30,8 @@ const run = async () => {
     const db = client.db("gym");
     const usersCollection = db.collection("users");
     const trainersCollection = db.collection("trainerApplications");
+    const classesCollection = db.collection("classes");
+
 
     const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
@@ -86,6 +88,26 @@ app.patch("/users/promote/:email", async (req, res) => {
   res.send(result);
 });
 
+app.patch('/users/downgrade/:email', async (req, res) => {
+  const email = req.params.email;
+
+  // 1. Downgrade role in usersCollection
+  const userResult = await usersCollection.updateOne(
+    { email },
+    { $set: { role: 'member' } }
+  );
+
+  // 2. Delete from trainerApplications
+  const trainerResult = await trainersCollection.deleteOne({ email });
+
+  res.send({
+    modifiedUser: userResult.modifiedCount,
+    deletedTrainer: trainerResult.deletedCount,
+  });
+});
+
+
+
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -96,17 +118,27 @@ app.patch("/users/promote/:email", async (req, res) => {
         .send({ message: "User created", insertedId: result.insertedId });
     });
 
-    app.get("/trainerApplications", async (req, res) => {
-      const result = await trainersCollection.find().toArray();
-      res.send(result);
-    });
+    // Get all trainers
+app.get("/trainers", async (req, res) => {
+  const result = await trainersCollection.find({ status: "confirmed" }).toArray();
+  res.send(result);
+});
+
+// Get a trainer by ID
+app.get("/trainers/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await trainersCollection.findOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
+
 
     // PATCH: Confirm trainer (change role)
     app.patch("/trainerApplications/confirm/:id", async (req, res) => {
       const id = req.params.id;
       const result = await trainersCollection.updateOne(
         { _id: new ObjectId(id) },
-        { $set: { role: "trainer" } }
+        { $set: { role: "trainer", status: 'confirmed' } }
       );
       res.send(result);
     });
@@ -128,6 +160,24 @@ app.patch("/users/promote/:email", async (req, res) => {
 
       res.send(result);
     });
+
+
+
+
+
+    app.post("/classes", async (req, res) => {
+  const newClass = req.body;
+  const result = await classesCollection.insertOne(newClass);
+  res.send(result);
+});
+
+
+
+    // Get all confirmed trainers
+app.get('/trainers', async (req, res) => {
+  const trainers = await trainersCollection.find({ status: 'confirmed' }).toArray();
+  res.send(trainers);
+});
 
     app.post("/trainerApplications", verifyJWT, async (req, res) => {
       const trainer = req.body;
