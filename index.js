@@ -2,6 +2,7 @@ require("dotenv").config();
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const express = require("express");
+const stripe = require("stripe")("sk_test_your_secret_key_here");
 const cors = require("cors");
 
 const app = express();
@@ -20,8 +21,8 @@ const client = new MongoClient(uri, {
 });
 
 app.get("/", (req, res) => {
-res.send('hello world')
-})
+  res.send("hello world");
+});
 
 const run = async () => {
   try {
@@ -31,7 +32,8 @@ const run = async () => {
     const usersCollection = db.collection("users");
     const trainersCollection = db.collection("trainerApplications");
     const classesCollection = db.collection("classes");
-
+    const paymentsCollection = db.collection("payments");
+    const forumsCollection = db.collection("forums");
 
     const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
@@ -45,6 +47,63 @@ const run = async () => {
       });
     };
 
+    app.post("/create-payment-intent", async (req, res) => {
+  const { price } = req.body;
+  const amount = parseInt(price * 100);
+
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount,
+    currency: "usd",
+    payment_method_types: ["card"],
+  });
+
+  res.send({ clientSecret: paymentIntent.client_secret });
+});
+
+app.post("/bookings", async (req, res) => {
+  const booking = req.body;
+  booking.createdAt = new Date();
+
+  const result = await db.collection("bookings").insertOne(booking);
+  res.send(result);
+});
+
+
+app.post("/payments", async (req, res) => {
+  const paymentData = req.body;
+  const result = await paymentsCollection.insertOne(paymentData);
+
+  await trainersCollection.updateOne(
+    { _id: new ObjectId(paymentData.trainerId) },
+    { $inc: { bookingCount: 1 } }
+  );
+
+  res.send(result);
+});
+
+// GET admin balance and recent transactions
+app.get("/admin/balance", async (req, res) => {
+  try {
+
+    const payments = await paymentsCollection
+      .find({})
+      .sort({ date: -1 })
+      .toArray();
+
+    const totalBalance = payments.reduce((sum, payment) => sum + payment.price, 0);
+    const recentTransactions = payments.slice(0, 6);
+
+    res.send({
+      totalBalance,
+      recentTransactions,
+    });
+  } catch (error) {
+    console.error("Error fetching admin balance", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
+
     app.post("/jwt", (req, res) => {
       const user = req.body; // expects { email }
       if (!user.email) {
@@ -55,12 +114,11 @@ const run = async () => {
       res.send({ token });
     });
 
-    app.get('/users', async (req, res) => {
-  const role = req.query.role;
-  const result = await usersCollection.find({ role }).toArray();
-  res.send(result);
-});
-
+    app.get("/users", async (req, res) => {
+      const role = req.query.role;
+      const result = await usersCollection.find({ role }).toArray();
+      res.send(result);
+    });
 
     app.get("/users/role/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
@@ -78,36 +136,33 @@ const run = async () => {
     });
 
     // Promote user role
-app.patch("/users/promote/:email", async (req, res) => {
-  const email = req.params.email;
-  const { role } = req.body;
-  const result = await usersCollection.updateOne(
-    { email },
-    { $set: { role } }
-  );
-  res.send(result);
-});
+    app.patch("/users/promote/:email", async (req, res) => {
+      const email = req.params.email;
+      const { role } = req.body;
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      );
+      res.send(result);
+    });
 
-app.patch('/users/downgrade/:email', async (req, res) => {
-  const email = req.params.email;
+    app.patch("/users/downgrade/:email", async (req, res) => {
+      const email = req.params.email;
 
-  // 1. Downgrade role in usersCollection
-  const userResult = await usersCollection.updateOne(
-    { email },
-    { $set: { role: 'member' } }
-  );
+      // 1. Downgrade role in usersCollection
+      const userResult = await usersCollection.updateOne(
+        { email },
+        { $set: { role: "member" } }
+      );
 
-  // 2. Delete from trainerApplications
-  const trainerResult = await trainersCollection.deleteOne({ email });
+      // 2. Delete from trainerApplications
+      const trainerResult = await trainersCollection.deleteOne({ email });
 
-  res.send({
-    modifiedUser: userResult.modifiedCount,
-    deletedTrainer: trainerResult.deletedCount,
-  });
-});
-
-
-
+      res.send({
+        modifiedUser: userResult.modifiedCount,
+        deletedTrainer: trainerResult.deletedCount,
+      });
+    });
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -118,27 +173,32 @@ app.patch('/users/downgrade/:email', async (req, res) => {
         .send({ message: "User created", insertedId: result.insertedId });
     });
 
-    // Get all trainers
-app.get("/trainers", async (req, res) => {
-  const result = await trainersCollection.find({ status: "confirmed" }).toArray();
-  res.send(result);
-});
 
-// Get a trainer by ID
-app.get("/trainers/:id", async (req, res) => {
-  const id = req.params.id;
-  const result = await trainersCollection.findOne({ _id: new ObjectId(id) });
+    // POST a forum post
+app.post("/forum", async (req, res) => {
+  const data = req.body;
+  const result = await forumCollection.insertOne(data);
   res.send(result);
 });
 
 
+    
+
+    // Get a trainer by ID
+    app.get("/trainers/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await trainersCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    });
 
     // PATCH: Confirm trainer (change role)
     app.patch("/trainerApplications/confirm/:id", async (req, res) => {
       const id = req.params.id;
       const result = await trainersCollection.updateOne(
         { _id: new ObjectId(id) },
-        { $set: { role: "trainer", status: 'confirmed' } }
+        { $set: { role: "trainer", status: "confirmed" } }
       );
       res.send(result);
     });
@@ -161,23 +221,32 @@ app.get("/trainers/:id", async (req, res) => {
       res.send(result);
     });
 
-
-
-
-
     app.post("/classes", async (req, res) => {
-  const newClass = req.body;
-  const result = await classesCollection.insertOne(newClass);
+      const newClass = req.body;
+      const result = await classesCollection.insertOne(newClass);
+      res.send(result);
+    });
+    
+    app.get("/trainerApplications/:id", async (req, res) => {
+  const { id } = req.params;
+  const result = await trainersCollection.findOne({ _id: new ObjectId(id) });
   res.send(result);
 });
 
 
-
+    app.get("/trainerApplications", async (req, res) => {
+      const trainers = await trainersCollection
+        .find()
+        .toArray();
+      res.send(trainers);
+    });
     // Get all confirmed trainers
-app.get('/trainers', async (req, res) => {
-  const trainers = await trainersCollection.find({ status: 'confirmed' }).toArray();
-  res.send(trainers);
-});
+    app.get("/trainers", async (req, res) => {
+      const trainers = await trainersCollection
+        .find({ status: "confirmed" })
+        .toArray();
+      res.send(trainers);
+    });
 
     app.post("/trainerApplications", verifyJWT, async (req, res) => {
       const trainer = req.body;
