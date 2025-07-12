@@ -256,6 +256,19 @@ app.post("/forum", async (req, res) => {
       res.send(result);
     });
 
+    app.get("/trainerApplications/:email", async (req, res) => {
+  const email = req.params.email;
+  const trainer = await trainersCollection.findOne({ email });
+
+  if (!trainer) {
+    return res.status(404).send({ message: "Trainer application not found" });
+  }
+
+  res.send(trainer);
+});
+
+
+
     // PATCH: Confirm trainer (change role)
     app.patch("/trainerApplications/confirm/:id", async (req, res) => {
       const id = req.params.id;
@@ -284,11 +297,77 @@ app.post("/forum", async (req, res) => {
       res.send(result);
     });
 
+app.get("/class/:id/trainers", async (req, res) => {
+  try {
+    const classId = req.params.id;
+    const classDoc = await classesCollection.findOne({ _id: new ObjectId(classId) });
+
+    if (!classDoc) return res.status(404).send({ error: "Class not found" });
+
+    if (!classDoc.trainerIds || classDoc.trainerIds.length === 0) return res.send([]);
+
+    const trainers = await trainersCollection
+      .find({ _id: { $in: classDoc.trainerIds.slice(0, 5) }, status: "approved" })
+      .toArray();
+
+    res.send(trainers);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+
+
+app.get("/classes",verifyJWT, async (req, res) => {
+  const classes = await classesCollection.find().toArray();
+  res.send(classes);
+});
+
+app.get("/allClasses", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 6;
+  const skip = (page - 1) * limit;
+
+  const total = await classesCollection.countDocuments();
+  const classes = await classesCollection
+    .find()
+    .skip(skip)
+    .limit(limit)
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send({ total, classes });
+});
+
+
+
+
     app.post("/classes", async (req, res) => {
-      const newClass = req.body;
-      const result = await classesCollection.insertOne(newClass);
-      res.send(result);
-    });
+  try {
+    const { className, image, details, otherInfo } = req.body;
+
+    if (!className || !image || !details) {
+      return res.status(400).send({ error: "Missing required fields" });
+    }
+
+    const newClass = {
+      className,
+      image,
+      details,
+      otherInfo: otherInfo || "",
+      trainerIds: [], 
+      createdAt: new Date(),
+    };
+
+    const result = await classesCollection.insertOne(newClass);
+    res.status(201).send({ success: true, insertedId: result.insertedId });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Failed to create class" });
+  }
+});
+
     
     app.get("/trainerApplications/:id", async (req, res) => {
   const { id } = req.params;
