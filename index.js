@@ -174,10 +174,73 @@ app.get("/admin/balance", async (req, res) => {
     });
 
 
+    app.get("/forum", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 6;
+  const skip = (page - 1) * limit;
+
+  const total = await forumsCollection.countDocuments();
+  const forums = await forumsCollection
+    .find()
+    .skip(skip)
+    .limit(limit)
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send({ forums, total });
+});
+
+// PATCH vote for a forum post
+app.patch("/forum/vote/:id", async (req, res) => {
+  const id = req.params.id;
+  const { email, voteType } = req.body; // voteType = 'up' or 'down'
+
+  const forum = await forumsCollection.findOne({ _id: new ObjectId(id) });
+  if (!forum) return res.status(404).send({ message: "Post not found" });
+
+  const existingVote = forum.voters?.find((v) => v.email === email);
+
+  let updateQuery = {};
+  let updateOptions = {};
+
+  if (!existingVote) {
+    // First time voting
+    updateQuery = {
+      $inc: {
+        upvotes: voteType === "up" ? 1 : 0,
+        downvotes: voteType === "down" ? 1 : 0,
+      },
+      $push: { voters: { email, voteType } },
+    };
+  } else if (existingVote.voteType !== voteType) {
+    // Changing vote
+    updateQuery = {
+      $inc: {
+        upvotes: voteType === "up" ? 1 : -1,
+        downvotes: voteType === "down" ? 1 : -1,
+      },
+      $set: {
+        "voters.$[elem].voteType": voteType,
+      },
+    };
+    updateOptions = {
+      arrayFilters: [{ "elem.email": email }],
+    };
+  } else {
+    // Already voted the same
+    return res.send({ message: "Already voted" });
+  }
+
+  await forumsCollection.updateOne({ _id: new ObjectId(id) }, updateQuery, updateOptions);
+  res.send({ message: "Vote updated successfully" });
+});
+
+
+
     // POST a forum post
 app.post("/forum", async (req, res) => {
   const data = req.body;
-  const result = await forumCollection.insertOne(data);
+  const result = await forumsCollection.insertOne(data);
   res.send(result);
 });
 
