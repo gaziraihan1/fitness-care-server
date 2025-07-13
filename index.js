@@ -34,6 +34,8 @@ const run = async () => {
     const classesCollection = db.collection("classes");
     const paymentsCollection = db.collection("payments");
     const forumsCollection = db.collection("forums");
+    const slotsCollection = db.collection("slots");
+    const bookingsCollection = db.collection("bookings")
 
     const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
@@ -64,7 +66,7 @@ app.post("/bookings", async (req, res) => {
   const booking = req.body;
   booking.createdAt = new Date();
 
-  const result = await db.collection("bookings").insertOne(booking);
+  const result = bookingsCollection("bookings").insertOne(booking);
   res.send(result);
 });
 
@@ -248,68 +250,20 @@ app.post("/forum", async (req, res) => {
     
 
     // Get a trainer by ID
-    app.get("/trainers/:id", async (req, res) => {
-      const id = req.params.id;
-      const result = await trainersCollection.findOne({
-        _id: new ObjectId(id),
-      });
-      res.send(result);
-    });
-
-    app.get("/trainerApplications/:email", async (req, res) => {
-  const email = req.params.email;
-  const trainer = await trainersCollection.findOne({ email });
-
-  if (!trainer) {
-    return res.status(404).send({ message: "Trainer application not found" });
-  }
-
-  res.send(trainer);
-});
-
-
-
-    // PATCH: Confirm trainer (change role)
-    app.patch("/trainerApplications/confirm/:id", async (req, res) => {
-      const id = req.params.id;
-      const result = await trainersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { role: "trainer", status: "confirmed" } }
-      );
-      res.send(result);
-    });
-
-    // PATCH: Reject trainer with feedback
-    app.patch("/trainerApplications/reject/:id", async (req, res) => {
-      const id = req.params.id;
-      const { feedback } = req.body;
-
-      const result = await trainersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: {
-            status: "rejected",
-            feedback: feedback || "",
-          },
-        }
-      );
-
-      res.send(result);
-    });
-
-app.get("/class/:id/trainers", async (req, res) => {
+    
+    app.get("/class/:id/trainers", async (req, res) => {
   try {
     const classId = req.params.id;
     const classDoc = await classesCollection.findOne({ _id: new ObjectId(classId) });
-
+    
     if (!classDoc) return res.status(404).send({ error: "Class not found" });
-
+    
     if (!classDoc.trainerIds || classDoc.trainerIds.length === 0) return res.send([]);
-
+    
     const trainers = await trainersCollection
-      .find({ _id: { $in: classDoc.trainerIds.slice(0, 5) }, status: "approved" })
-      .toArray();
-
+    .find({ _id: { $in: classDoc.trainerIds.slice(0, 5) }, status: "approved" })
+    .toArray();
+    
     res.send(trainers);
   } catch (error) {
     console.error(error);
@@ -331,19 +285,19 @@ app.get("/allClasses", async (req, res) => {
 
   const total = await classesCollection.countDocuments();
   const classes = await classesCollection
-    .find()
-    .skip(skip)
-    .limit(limit)
-    .sort({ createdAt: -1 })
-    .toArray();
-
+  .find()
+  .skip(skip)
+  .limit(limit)
+  .sort({ createdAt: -1 })
+  .toArray();
+  
   res.send({ total, classes });
 });
 
 
 
 
-    app.post("/classes", async (req, res) => {
+app.post("/classes", async (req, res) => {
   try {
     const { className, image, details, otherInfo } = req.body;
 
@@ -359,13 +313,106 @@ app.get("/allClasses", async (req, res) => {
       trainerIds: [], 
       createdAt: new Date(),
     };
-
+    
     const result = await classesCollection.insertOne(newClass);
     res.status(201).send({ success: true, insertedId: result.insertedId });
   } catch (error) {
     console.error(error);
     res.status(500).send({ error: "Failed to create class" });
   }
+});
+
+app.get("/slots", async (req, res) => {
+  const email = req.query.email;
+  try {
+    const query = email ? { trainerEmail: email } : {};
+    const slots = await slotsCollection.find(query).sort({ createdAt: -1 }).toArray();
+    res.send(slots);
+  } catch (error) {
+    res.status(500).send({ success: false, error: "Failed to fetch slots" });
+  }
+});
+
+app.delete("/slots/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await slotsCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result); 
+});
+
+
+app.post("/slots", async (req, res) => {
+  const slotData = req.body;
+  
+  try {
+    const result = await slotsCollection.insertOne({
+      ...slotData,
+      createdAt: new Date(),
+      status: "active", 
+    });
+    
+    res.send({ success: true, insertedId: result.insertedId });
+  } catch (error) {
+    res.status(500).send({ success: false, error: "Failed to create slot" });
+  }
+});
+
+app.get("/trainers/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await trainersCollection.findOne({
+    _id: new ObjectId(id),
+  });
+  res.send(result);
+});
+
+// GET /trainerApplications/user/:email
+app.get("/trainerApplications/user/:email", async (req, res) => {
+  const email = req.params.email;
+  const applications = await trainersCollection
+    .find({ email })
+    .toArray();
+  res.send(applications);
+});
+
+
+app.get("/trainerApplications/:email", async (req, res) => {
+const email = req.params.email;
+const trainer = await trainersCollection.findOne({ email });
+
+if (!trainer) {
+return res.status(404).send({ message: "Trainer application not found" });
+}
+
+res.send(trainer);
+});
+
+
+
+// PATCH: Confirm trainer (change role)
+app.patch("/trainerApplications/confirm/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await trainersCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { role: "trainer", status: "confirmed" } }
+  );
+  res.send(result);
+});
+
+// PATCH: Reject trainer with feedback
+app.patch("/trainerApplications/reject/:id", async (req, res) => {
+  const id = req.params.id;
+  const { feedback } = req.body;
+
+  const result = await trainersCollection.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        status: "rejected",
+        feedback: feedback || "",
+      },
+    }
+  );
+
+  res.send(result);
 });
 
     
