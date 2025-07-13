@@ -103,8 +103,31 @@ const run = async () => {
         { $inc: { bookingCount: 1 } }
       );
 
+      if (paymentData.classId) {
+    await classesCollection.updateOne(
+      { _id: new ObjectId(paymentData.classId) },
+      { $inc: { bookingCount: 1 } }
+    );
+  }
+
       res.send(result);
     });
+
+    // Backend: GET top 6 featured classes sorted by booking count
+app.get("/featured-classes", async (req, res) => {
+  try {
+    const topClasses = await classesCollection
+      .find({})
+      .sort({ bookingCount: -1 }) // 🧠 Sort by highest bookings
+      .limit(6)
+      .toArray();
+
+    res.send(topClasses);
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch featured classes" });
+  }
+});
+
 
     app.get("/admin/balance", async (req, res) => {
       try {
