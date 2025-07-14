@@ -95,29 +95,45 @@ const run = async () => {
     });
 
     app.post("/payments", async (req, res) => {
-      const paymentData = req.body;
-      const result = await paymentsCollection.insertOne(paymentData);
+  try {
+    const payment = req.body;
 
-      await trainersCollection.updateOne(
-        { _id: new ObjectId(paymentData.trainerId) },
-        { $inc: { bookingCount: 1 } }
-      );
+    // Insert payment info
+    const result = await paymentsCollection.insertOne(payment);
 
-      if (paymentData.classId) {
-    await classesCollection.updateOne(
-      { _id: new ObjectId(paymentData.classId) },
-      { $inc: { bookingCount: 1 } }
+    // Increment booking count for the class
+    const updateClass = await classesCollection.updateOne(
+      { _id: new ObjectId(payment.classId) },
+      { $inc: { bookings: 1 } }
     );
-  }
 
-      res.send(result);
-    });
+    // Optionally mark the slot as booked (optional if you're tracking slot usage)
+    await slotsCollection.updateOne(
+      { _id: new ObjectId(payment.slotId) },
+      {
+        $set: {
+          status: "booked",
+          bookedBy: {
+            name: payment.userName,
+            email: payment.userEmail,
+          },
+        },
+      }
+    );
+
+    res.send({ success: true, result, updateClass });
+  } catch (err) {
+    console.error("Payment Error:", err);
+    res.status(500).send({ success: false, error: "Internal server error" });
+  }
+});
+
 
 app.get("/featured-classes", async (req, res) => {
   try {
     const topClasses = await classesCollection
       .find({})
-      .sort({ bookingCount: -1 })
+      .sort({ bookings: -1 })
       .limit(6)
       .toArray();
 
@@ -405,6 +421,30 @@ app.get("/reviews", async (req, res) => {
           .send({ success: false, error: "Failed to fetch slots" });
       }
     });
+
+    app.get("/slots/:id", async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const slot = await slotsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!slot) {
+      return res.status(404).send({ error: "Slot not found" });
+    }
+
+    // If you need to populate className from classesCollection
+    if (slot.classId) {
+      const classInfo = await classesCollection.findOne({ _id: new ObjectId(slot.classId) });
+      slot.className = classInfo?.className || "Unknown Class";
+    }
+
+    res.send(slot);
+  } catch (error) {
+    console.error("Error fetching slot:", error);
+    res.status(500).send({ error: "Internal server error" });
+  }
+});
+
 
     app.delete("/slots/:id", async (req, res) => {
       const id = req.params.id;
