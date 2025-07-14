@@ -113,12 +113,11 @@ const run = async () => {
       res.send(result);
     });
 
-    // Backend: GET top 6 featured classes sorted by booking count
 app.get("/featured-classes", async (req, res) => {
   try {
     const topClasses = await classesCollection
       .find({})
-      .sort({ bookingCount: -1 }) // 🧠 Sort by highest bookings
+      .sort({ bookingCount: -1 })
       .limit(6)
       .toArray();
 
@@ -162,6 +161,12 @@ app.get("/subscribers/count", async (req, res) => {
 app.get("/payments/count", async (req, res) => {
   const count = await paymentsCollection.distinct("userEmail");
   res.send({ count: count.length });
+});
+
+
+app.get("/reviews", async (req, res) => {
+  const result = await reviewsCollection.find().sort({ createdAt: -1 }).toArray();
+  res.send(result);
 });
 
 
@@ -339,20 +344,26 @@ app.get("/payments/count", async (req, res) => {
     });
 
     app.get("/allClasses", async (req, res) => {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 6;
-      const skip = (page - 1) * limit;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 6;
+  const skip = (page - 1) * limit;
+  const search = req.query.search || "";
 
-      const total = await classesCollection.countDocuments();
-      const classes = await classesCollection
-        .find()
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .toArray();
+  const query = {
+    className: { $regex: search, $options: "i" }, // Case-insensitive partial match
+  };
 
-      res.send({ total, classes });
-    });
+  const total = await classesCollection.countDocuments(query);
+  const classes = await classesCollection
+    .find(query)
+    .skip(skip)
+    .limit(limit)
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send({ total, classes });
+});
+
 
     app.post("/classes", async (req, res) => {
       try {
@@ -474,21 +485,14 @@ app.get("/payments/count", async (req, res) => {
 
       res.send(result);
     });
-
-    app.get("/trainerApplications/:id", async (req, res) => {
-      const { id } = req.params;
-      const result = await trainersCollection.findOne({
-        _id: new ObjectId(id),
-      });
-      res.send(result);
-    });
+    
 
     app.get("/trainerApplications", async (req, res) => {
       const trainers = await trainersCollection.find().toArray();
       res.send(trainers);
     });
     // Get all confirmed trainers
-    app.get("/trainers", async (req, res) => {
+    app.get("/trainers", verifyJWT, async (req, res) => {
       const trainers = await trainersCollection
         .find({ status: "confirmed" })
         .toArray();
