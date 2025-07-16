@@ -26,8 +26,6 @@ app.get("/", (req, res) => {
 
 const run = async () => {
   try {
-    await client.connect();
-
     const db = client.db("gym");
     const usersCollection = db.collection("users");
     const trainersCollection = db.collection("trainerApplications");
@@ -39,7 +37,6 @@ const run = async () => {
     const reviewsCollection = db.collection("reviews");
     const newsletterCollection = db.collection("newsletters");
 
-    
     const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
       if (!authHeader) {
@@ -55,6 +52,15 @@ const run = async () => {
       });
     };
 
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user.email;
+      const user = await usersCollection.findOne({ email });
+
+      if (user?.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
 
     app.post("/jwt", (req, res) => {
       const user = req.body;
@@ -65,7 +71,6 @@ const run = async () => {
 
       res.send({ token });
     });
-
 
     app.post("/create-payment-intent", async (req, res) => {
       const { price } = req.body;
@@ -80,7 +85,6 @@ const run = async () => {
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
-
     app.get("/bookings/:userEmail", verifyJWT, async (req, res) => {
       const userEmail = req.params.userEmail;
       if (req.user.email !== userEmail) {
@@ -91,7 +95,6 @@ const run = async () => {
       res.send(result);
     });
 
-
     app.post("/bookings", async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
@@ -99,7 +102,6 @@ const run = async () => {
       const result = await bookingsCollection.insertOne(booking);
       res.send(result);
     });
-
 
     app.post("/payments", async (req, res) => {
       try {
@@ -133,7 +135,6 @@ const run = async () => {
       }
     });
 
-
     app.get("/featured-classes", async (req, res) => {
       try {
         const topClasses = await classesCollection
@@ -148,8 +149,7 @@ const run = async () => {
       }
     });
 
-
-    app.get("/admin/balance", async (req, res) => {
+    app.get("/admin/balance", verifyJWT, verifyAdmin, async (req, res) => {
       try {
         const payments = await paymentsCollection
           .find({})
@@ -172,7 +172,6 @@ const run = async () => {
       }
     });
 
-
     app.get("/newsletter/count", async (req, res) => {
       try {
         const count = await newsletterCollection.estimatedDocumentCount();
@@ -182,7 +181,6 @@ const run = async () => {
         res.status(500).send({ message: "Failed to fetch subscriber count" });
       }
     });
-
 
     app.get("/newsletter", async (req, res) => {
       try {
@@ -196,7 +194,6 @@ const run = async () => {
         res.status(500).send({ message: "Failed to fetch subscribers" });
       }
     });
-
 
     app.post("/newsletter", async (req, res) => {
       const { name, email } = req.body;
@@ -218,7 +215,6 @@ const run = async () => {
       }
     });
 
-
     app.get("/payments/count", async (req, res) => {
       try {
         const count = await paymentsCollection.countDocuments();
@@ -229,7 +225,6 @@ const run = async () => {
       }
     });
 
-
     app.get("/reviews", async (req, res) => {
       const result = await reviewsCollection
         .find()
@@ -238,20 +233,17 @@ const run = async () => {
       res.send(result);
     });
 
-
     app.post("/reviews", verifyJWT, async (req, res) => {
       const review = req.body;
       const result = await reviewsCollection.insertOne(review);
       res.send(result);
     });
 
-
     app.get("/users", async (req, res) => {
       const role = req.query.role;
       const result = await usersCollection.find({ role }).toArray();
       res.send(result);
     });
-
 
     app.get("/users/role/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
@@ -267,7 +259,6 @@ const run = async () => {
       res.send({ role: user.role });
     });
 
-
     app.patch("/users/promote/:email", async (req, res) => {
       const email = req.params.email;
       const { role } = req.body;
@@ -277,7 +268,6 @@ const run = async () => {
       );
       res.send(result);
     });
-
 
     app.patch("/users/downgrade/:email", async (req, res) => {
       const email = req.params.email;
@@ -295,7 +285,6 @@ const run = async () => {
       });
     });
 
-
     app.post("/users", async (req, res) => {
       const user = req.body;
 
@@ -305,6 +294,62 @@ const run = async () => {
         .send({ message: "User created", insertedId: result.insertedId });
     });
 
+    app.get("/forum/latest", async (req, res) => {
+      try {
+        const forums = await forumsCollection
+          .find(
+            {},
+            {
+              projection: {
+                title: 1,
+                content: 1,
+                author: 1,
+                email: 1,
+                role: 1,
+                createdAt: 1,
+                upvotes: 1,
+                downvotes: 1,
+              },
+            }
+          )
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+
+        res.status(200).send(forums);
+      } catch (error) {
+        console.error("❌ Error fetching latest forum posts:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    app.get("/forum/:id", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const post = await forumsCollection.findOne(
+          { _id: new ObjectId(id) },
+          {
+            projection: {
+              title: 1,
+              content: 1,
+              author: 1,
+              email: 1,
+              role: 1,
+              createdAt: 1,
+              upvotes: 1,
+              downvotes: 1,
+            },
+          }
+        );
+        if (!post) {
+          return res.status(404).send({ message: "Post not found" });
+        }
+        res.send(post);
+      } catch (error) {
+        console.error("❌ Error fetching forum post details:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
 
     app.get("/forum", async (req, res) => {
       const page = parseInt(req.query.page) || 1;
@@ -321,7 +366,6 @@ const run = async () => {
 
       res.send({ forums, total });
     });
-
 
     app.patch("/forum/vote/:id", async (req, res) => {
       const id = req.params.id;
@@ -368,13 +412,11 @@ const run = async () => {
       res.send({ message: "Vote updated successfully" });
     });
 
-
     app.post("/forum", async (req, res) => {
       const data = req.body;
       const result = await forumsCollection.insertOne(data);
       res.send(result);
     });
-
 
     app.get("/class/:id/trainers", async (req, res) => {
       try {
@@ -403,12 +445,10 @@ const run = async () => {
       }
     });
 
-
     app.get("/classes", verifyJWT, async (req, res) => {
       const classes = await classesCollection.find().toArray();
       res.send(classes);
     });
-
 
     app.get("/allClasses", async (req, res) => {
       const page = parseInt(req.query.page) || 1;
@@ -430,7 +470,6 @@ const run = async () => {
 
       res.send({ total, classes });
     });
-
 
     app.post("/classes", async (req, res) => {
       try {
@@ -457,7 +496,6 @@ const run = async () => {
       }
     });
 
-
     app.get("/slots", async (req, res) => {
       const email = req.query.email;
       try {
@@ -473,7 +511,6 @@ const run = async () => {
           .send({ success: false, error: "Failed to fetch slots" });
       }
     });
-
 
     app.get("/slots/:id", async (req, res) => {
       const id = req.params.id;
@@ -499,32 +536,76 @@ const run = async () => {
       }
     });
 
-
     app.delete("/slots/:id", async (req, res) => {
       const id = req.params.id;
       const result = await slotsCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
-
     app.post("/slots", async (req, res) => {
-      const slotData = req.body;
+      const { trainerEmail, slotName, slotTime, days, classId, notes } =
+        req.body;
 
       try {
-        const result = await slotsCollection.insertOne({
-          ...slotData,
+        const slotRes = await slotsCollection.insertOne({
+          trainerEmail,
+          slotName,
+          slotTime,
+          days,
+          classId,
+          notes,
           createdAt: new Date(),
-          status: "active",
         });
 
-        res.send({ success: true, insertedId: result.insertedId });
+        const trainer = await trainersCollection.findOne({
+          email: trainerEmail,
+        });
+        if (trainer) {
+          const trainerDetails = {
+            trainerId: trainer._id.toString(),
+            name: trainer.fullName,
+            image: trainer.profileImage,
+            role: "trainer",
+          };
+
+          await classesCollection.updateOne(
+            { _id: new ObjectId(classId) },
+            {
+              $addToSet: { trainers: trainerDetails },
+            }
+          );
+        }
+
+        res.send({ insertedId: slotRes.insertedId });
       } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, error: "Failed to create slot" });
+        console.error("Error adding slot:", error);
+        res.status(500).send({ message: "Failed to add slot" });
       }
     });
 
+    app.delete("/trainers/:id", async (req, res) => {
+      const trainerId = req.params.id;
+
+      try {
+        await trainerApplicationsCollection.deleteOne({
+          _id: new ObjectId(trainerId),
+        });
+
+        await classesCollection.updateMany(
+          {},
+          {
+            $pull: {
+              trainers: { trainerId },
+            },
+          }
+        );
+
+        res.send({ message: "Trainer deleted and removed from classes." });
+      } catch (err) {
+        console.error("Error deleting trainer:", err);
+        res.status(500).send({ message: "Failed to delete trainer" });
+      }
+    });
 
     app.get("/trainers/:id", async (req, res) => {
       const id = req.params.id;
@@ -534,13 +615,11 @@ const run = async () => {
       res.send(result);
     });
 
-
     app.get("/trainerApplications/user/:email", async (req, res) => {
       const email = req.params.email;
       const applications = await trainersCollection.find({ email }).toArray();
       res.send(applications);
     });
-
 
     app.get("/trainerApplications/:email", async (req, res) => {
       const email = req.params.email;
@@ -555,7 +634,6 @@ const run = async () => {
       res.send(trainer);
     });
 
-
     app.patch("/trainerApplications/confirm/:id", async (req, res) => {
       const id = req.params.id;
       const result = await trainersCollection.updateOne(
@@ -564,7 +642,6 @@ const run = async () => {
       );
       res.send(result);
     });
-
 
     app.patch("/trainerApplications/reject/:id", async (req, res) => {
       const id = req.params.id;
@@ -583,10 +660,15 @@ const run = async () => {
       res.send(result);
     });
 
-    app.get("/trainerApplications", async (req, res) => {
-      const trainers = await trainersCollection.find().toArray();
-      res.send(trainers);
-    });
+    app.get(
+      "/trainerApplications",
+      verifyJWT,
+      verifyAdmin,
+      async (req, res) => {
+        const trainers = await trainersCollection.find().toArray();
+        res.send(trainers);
+      }
+    );
 
     app.get("/trainers", verifyJWT, async (req, res) => {
       const trainers = await trainersCollection
@@ -600,11 +682,6 @@ const run = async () => {
       const result = await trainersCollection.insertOne(trainer);
       res.send(result);
     });
-
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
   } finally {
   }
 };
