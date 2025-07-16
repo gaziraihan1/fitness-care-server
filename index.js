@@ -37,6 +37,8 @@ const run = async () => {
     const slotsCollection = db.collection("slots");
     const bookingsCollection = db.collection("bookings");
     const reviewsCollection = db.collection("reviews");
+    const newsletterCollection = db.collection("newsletters");
+
     
     const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
@@ -53,8 +55,9 @@ const run = async () => {
       });
     };
 
+
     app.post("/jwt", (req, res) => {
-      const user = req.body; // expects { email }
+      const user = req.body;
       if (!user.email) {
         return res.status(400).send({ message: "Email is required" });
       }
@@ -62,6 +65,7 @@ const run = async () => {
 
       res.send({ token });
     });
+
 
     app.post("/create-payment-intent", async (req, res) => {
       const { price } = req.body;
@@ -76,6 +80,7 @@ const run = async () => {
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
+
     app.get("/bookings/:userEmail", verifyJWT, async (req, res) => {
       const userEmail = req.params.userEmail;
       if (req.user.email !== userEmail) {
@@ -86,6 +91,7 @@ const run = async () => {
       res.send(result);
     });
 
+
     app.post("/bookings", async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
@@ -94,54 +100,53 @@ const run = async () => {
       res.send(result);
     });
 
+
     app.post("/payments", async (req, res) => {
-  try {
-    const payment = req.body;
+      try {
+        const payment = req.body;
 
-    // Insert payment info
-    const result = await paymentsCollection.insertOne(payment);
+        const result = await paymentsCollection.insertOne(payment);
+        const updateClass = await classesCollection.updateOne(
+          { _id: new ObjectId(payment.classId) },
+          { $inc: { bookings: 1 } }
+        );
 
-    // Increment booking count for the class
-    const updateClass = await classesCollection.updateOne(
-      { _id: new ObjectId(payment.classId) },
-      { $inc: { bookings: 1 } }
-    );
+        await slotsCollection.updateOne(
+          { _id: new ObjectId(payment.slotId) },
+          {
+            $set: {
+              status: "booked",
+              bookedBy: {
+                name: payment.userName,
+                email: payment.userEmail,
+              },
+            },
+          }
+        );
 
-    // Optionally mark the slot as booked (optional if you're tracking slot usage)
-    await slotsCollection.updateOne(
-      { _id: new ObjectId(payment.slotId) },
-      {
-        $set: {
-          status: "booked",
-          bookedBy: {
-            name: payment.userName,
-            email: payment.userEmail,
-          },
-        },
+        res.send({ success: true, result, updateClass });
+      } catch (err) {
+        console.error("Payment Error:", err);
+        res
+          .status(500)
+          .send({ success: false, error: "Internal server error" });
       }
-    );
-
-    res.send({ success: true, result, updateClass });
-  } catch (err) {
-    console.error("Payment Error:", err);
-    res.status(500).send({ success: false, error: "Internal server error" });
-  }
-});
+    });
 
 
-app.get("/featured-classes", async (req, res) => {
-  try {
-    const topClasses = await classesCollection
-      .find({})
-      .sort({ bookings: -1 })
-      .limit(6)
-      .toArray();
+    app.get("/featured-classes", async (req, res) => {
+      try {
+        const topClasses = await classesCollection
+          .find({})
+          .sort({ bookings: -1 })
+          .limit(6)
+          .toArray();
 
-    res.send(topClasses);
-  } catch (err) {
-    res.status(500).send({ message: "Failed to fetch featured classes" });
-  }
-});
+        res.send(topClasses);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to fetch featured classes" });
+      }
+    });
 
 
     app.get("/admin/balance", async (req, res) => {
@@ -167,31 +172,78 @@ app.get("/featured-classes", async (req, res) => {
       }
     });
 
-    // Count newsletter subscribers
-app.get("/subscribers/count", async (req, res) => {
-  const count = await db.collection("subscribers").countDocuments();
-  res.send({ count });
-});
 
-// Count total paid members (i.e., unique users who made a payment)
-app.get("/payments/count", async (req, res) => {
-  const count = await paymentsCollection.distinct("userEmail");
-  res.send({ count: count.length });
-});
-
-
-app.get("/reviews", async (req, res) => {
-  const result = await reviewsCollection.find().sort({ createdAt: -1 }).toArray();
-  res.send(result);
-});
+    app.get("/newsletter/count", async (req, res) => {
+      try {
+        const count = await newsletterCollection.estimatedDocumentCount();
+        res.send({ count });
+      } catch (err) {
+        console.error("Failed to fetch newsletter count:", err);
+        res.status(500).send({ message: "Failed to fetch subscriber count" });
+      }
+    });
 
 
-    app.post('/reviews', verifyJWT, async (req, res) => {
-  const review = req.body;
-  const result = await reviewsCollection.insertOne(review);
-  res.send(result);
-});
+    app.get("/newsletter", async (req, res) => {
+      try {
+        const subscribers = await newsletterCollection
+          .find()
+          .sort({ date: -1 })
+          .toArray();
+        res.send(subscribers);
+      } catch (err) {
+        console.error("Failed to fetch subscribers", err);
+        res.status(500).send({ message: "Failed to fetch subscribers" });
+      }
+    });
 
+
+    app.post("/newsletter", async (req, res) => {
+      const { name, email } = req.body;
+      if (!name || !email) {
+        return res.status(400).send({ message: "Name and email are required" });
+      }
+
+      try {
+        const existing = await newsletterCollection.findOne({ email });
+        if (existing) {
+          return res.status(409).send({ message: "Email already subscribed" });
+        }
+
+        await newsletterCollection.insertOne({ name, email, date: new Date() });
+        res.send({ message: "Subscribed successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to subscribe" });
+      }
+    });
+
+
+    app.get("/payments/count", async (req, res) => {
+      try {
+        const count = await paymentsCollection.countDocuments();
+        res.send({ count });
+      } catch (err) {
+        console.error("Error fetching payments count:", err);
+        res.status(500).send({ message: "Failed to fetch payments count" });
+      }
+    });
+
+
+    app.get("/reviews", async (req, res) => {
+      const result = await reviewsCollection
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.send(result);
+    });
+
+
+    app.post("/reviews", verifyJWT, async (req, res) => {
+      const review = req.body;
+      const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
 
 
     app.get("/users", async (req, res) => {
@@ -200,10 +252,10 @@ app.get("/reviews", async (req, res) => {
       res.send(result);
     });
 
+
     app.get("/users/role/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
 
-      // Block access if token's email and param email don't match
       if (req.user.email !== email) {
         return res.status(403).send({ message: "Forbidden: Email mismatch" });
       }
@@ -212,10 +264,10 @@ app.get("/reviews", async (req, res) => {
 
       if (!user) return res.status(404).send({ message: "User not found" });
 
-      res.send({ role: user.role }); // 'admin', 'trainer', or 'member'
+      res.send({ role: user.role });
     });
 
-    // Promote user role
+
     app.patch("/users/promote/:email", async (req, res) => {
       const email = req.params.email;
       const { role } = req.body;
@@ -226,16 +278,15 @@ app.get("/reviews", async (req, res) => {
       res.send(result);
     });
 
+
     app.patch("/users/downgrade/:email", async (req, res) => {
       const email = req.params.email;
 
-      // 1. Downgrade role in usersCollection
       const userResult = await usersCollection.updateOne(
         { email },
         { $set: { role: "member" } }
       );
 
-      // 2. Delete from trainerApplications
       const trainerResult = await trainersCollection.deleteOne({ email });
 
       res.send({
@@ -243,6 +294,7 @@ app.get("/reviews", async (req, res) => {
         deletedTrainer: trainerResult.deletedCount,
       });
     });
+
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -252,6 +304,7 @@ app.get("/reviews", async (req, res) => {
         .status(201)
         .send({ message: "User created", insertedId: result.insertedId });
     });
+
 
     app.get("/forum", async (req, res) => {
       const page = parseInt(req.query.page) || 1;
@@ -269,10 +322,10 @@ app.get("/reviews", async (req, res) => {
       res.send({ forums, total });
     });
 
-    // PATCH vote for a forum post
+
     app.patch("/forum/vote/:id", async (req, res) => {
       const id = req.params.id;
-      const { email, voteType } = req.body; // voteType = 'up' or 'down'
+      const { email, voteType } = req.body;
 
       const forum = await forumsCollection.findOne({ _id: new ObjectId(id) });
       if (!forum) return res.status(404).send({ message: "Post not found" });
@@ -283,7 +336,6 @@ app.get("/reviews", async (req, res) => {
       let updateOptions = {};
 
       if (!existingVote) {
-        // First time voting
         updateQuery = {
           $inc: {
             upvotes: voteType === "up" ? 1 : 0,
@@ -292,7 +344,6 @@ app.get("/reviews", async (req, res) => {
           $push: { voters: { email, voteType } },
         };
       } else if (existingVote.voteType !== voteType) {
-        // Changing vote
         updateQuery = {
           $inc: {
             upvotes: voteType === "up" ? 1 : -1,
@@ -306,7 +357,6 @@ app.get("/reviews", async (req, res) => {
           arrayFilters: [{ "elem.email": email }],
         };
       } else {
-        // Already voted the same
         return res.send({ message: "Already voted" });
       }
 
@@ -318,14 +368,13 @@ app.get("/reviews", async (req, res) => {
       res.send({ message: "Vote updated successfully" });
     });
 
-    // POST a forum post
+
     app.post("/forum", async (req, res) => {
       const data = req.body;
       const result = await forumsCollection.insertOne(data);
       res.send(result);
     });
 
-    // Get a trainer by ID
 
     app.get("/class/:id/trainers", async (req, res) => {
       try {
@@ -354,31 +403,33 @@ app.get("/reviews", async (req, res) => {
       }
     });
 
+
     app.get("/classes", verifyJWT, async (req, res) => {
       const classes = await classesCollection.find().toArray();
       res.send(classes);
     });
 
+
     app.get("/allClasses", async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 6;
-  const skip = (page - 1) * limit;
-  const search = req.query.search || "";
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 6;
+      const skip = (page - 1) * limit;
+      const search = req.query.search || "";
 
-  const query = {
-    className: { $regex: search, $options: "i" }, // Case-insensitive partial match
-  };
+      const query = {
+        className: { $regex: search, $options: "i" },
+      };
 
-  const total = await classesCollection.countDocuments(query);
-  const classes = await classesCollection
-    .find(query)
-    .skip(skip)
-    .limit(limit)
-    .sort({ createdAt: -1 })
-    .toArray();
+      const total = await classesCollection.countDocuments(query);
+      const classes = await classesCollection
+        .find(query)
+        .skip(skip)
+        .limit(limit)
+        .sort({ createdAt: -1 })
+        .toArray();
 
-  res.send({ total, classes });
-});
+      res.send({ total, classes });
+    });
 
 
     app.post("/classes", async (req, res) => {
@@ -406,6 +457,7 @@ app.get("/reviews", async (req, res) => {
       }
     });
 
+
     app.get("/slots", async (req, res) => {
       const email = req.query.email;
       try {
@@ -422,28 +474,30 @@ app.get("/reviews", async (req, res) => {
       }
     });
 
+
     app.get("/slots/:id", async (req, res) => {
-  const id = req.params.id;
+      const id = req.params.id;
 
-  try {
-    const slot = await slotsCollection.findOne({ _id: new ObjectId(id) });
+      try {
+        const slot = await slotsCollection.findOne({ _id: new ObjectId(id) });
 
-    if (!slot) {
-      return res.status(404).send({ error: "Slot not found" });
-    }
+        if (!slot) {
+          return res.status(404).send({ error: "Slot not found" });
+        }
 
-    // If you need to populate className from classesCollection
-    if (slot.classId) {
-      const classInfo = await classesCollection.findOne({ _id: new ObjectId(slot.classId) });
-      slot.className = classInfo?.className || "Unknown Class";
-    }
+        if (slot.classId) {
+          const classInfo = await classesCollection.findOne({
+            _id: new ObjectId(slot.classId),
+          });
+          slot.className = classInfo?.className || "Unknown Class";
+        }
 
-    res.send(slot);
-  } catch (error) {
-    console.error("Error fetching slot:", error);
-    res.status(500).send({ error: "Internal server error" });
-  }
-});
+        res.send(slot);
+      } catch (error) {
+        console.error("Error fetching slot:", error);
+        res.status(500).send({ error: "Internal server error" });
+      }
+    });
 
 
     app.delete("/slots/:id", async (req, res) => {
@@ -451,6 +505,7 @@ app.get("/reviews", async (req, res) => {
       const result = await slotsCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
+
 
     app.post("/slots", async (req, res) => {
       const slotData = req.body;
@@ -470,6 +525,7 @@ app.get("/reviews", async (req, res) => {
       }
     });
 
+
     app.get("/trainers/:id", async (req, res) => {
       const id = req.params.id;
       const result = await trainersCollection.findOne({
@@ -478,12 +534,13 @@ app.get("/reviews", async (req, res) => {
       res.send(result);
     });
 
-    // GET /trainerApplications/user/:email
+
     app.get("/trainerApplications/user/:email", async (req, res) => {
       const email = req.params.email;
       const applications = await trainersCollection.find({ email }).toArray();
       res.send(applications);
     });
+
 
     app.get("/trainerApplications/:email", async (req, res) => {
       const email = req.params.email;
@@ -498,7 +555,7 @@ app.get("/reviews", async (req, res) => {
       res.send(trainer);
     });
 
-    // PATCH: Confirm trainer (change role)
+
     app.patch("/trainerApplications/confirm/:id", async (req, res) => {
       const id = req.params.id;
       const result = await trainersCollection.updateOne(
@@ -508,7 +565,7 @@ app.get("/reviews", async (req, res) => {
       res.send(result);
     });
 
-    // PATCH: Reject trainer with feedback
+
     app.patch("/trainerApplications/reject/:id", async (req, res) => {
       const id = req.params.id;
       const { feedback } = req.body;
@@ -525,13 +582,12 @@ app.get("/reviews", async (req, res) => {
 
       res.send(result);
     });
-    
 
     app.get("/trainerApplications", async (req, res) => {
       const trainers = await trainersCollection.find().toArray();
       res.send(trainers);
     });
-    // Get all confirmed trainers
+
     app.get("/trainers", verifyJWT, async (req, res) => {
       const trainers = await trainersCollection
         .find({ status: "confirmed" })
