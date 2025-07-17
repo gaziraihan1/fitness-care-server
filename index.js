@@ -670,7 +670,7 @@ const run = async () => {
       }
     );
 
-    app.get("/trainers", verifyJWT, async (req, res) => {
+    app.get("/trainers", async (req, res) => {
       const trainers = await trainersCollection
         .find({ status: "confirmed" })
         .toArray();
