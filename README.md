@@ -7,7 +7,6 @@ It provides APIs for trainers, classes, forums, newsletters, bookings, and more.
 
 ## 🌍 Live Backend / API
 👉 **Live API URL:** [https://server-side-mu-seven.vercel.app](https://server-side-mu-seven.vercel.app)
-*(replace with your deployed URL if available)*
 
 ---
 
