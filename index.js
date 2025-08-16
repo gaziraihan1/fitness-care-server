@@ -332,19 +332,7 @@ const run = async () => {
       const { id } = req.params;
       try {
         const post = await forumsCollection.findOne(
-          { _id: new ObjectId(id) },
-          {
-            projection: {
-              title: 1,
-              content: 1,
-              author: 1,
-              email: 1,
-              role: 1,
-              createdAt: 1,
-              upvotes: 1,
-              downvotes: 1,
-            },
-          }
+          { _id: new ObjectId(id) }
         );
         if (!post) {
           return res.status(404).send({ message: "Post not found" });
