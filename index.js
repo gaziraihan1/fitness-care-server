@@ -148,6 +148,11 @@ const run = async () => {
         res.status(500).send({ message: "Failed to fetch featured classes" });
       }
     });
+    app.get("/allClasses/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await classesCollection.findOne({_id: new ObjectId(id)});
+      res.send(result)
+    })
 
     app.get("/admin/balance", verifyJWT, verifyAdmin, async (req, res) => {
       try {
